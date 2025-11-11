@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Atenea — Asistente</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;background:#f4f6f8;margin:0;display:flex;align-items:center;justify-content:center;height:100vh}
+    .card{width:720px;max-width:95%;background:#fff;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.08);display:flex;flex-direction:column;overflow:hidden}
+    .header{background:#0078d7;color:#fff;padding:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+    .header .meta{margin-left:auto;font-size:13px;opacity:.95}
+    .messages{padding:16px;height:56vh;overflow:auto;display:flex;flex-direction:column;gap:10px;background:linear-gradient(#fff,#f8fafc)}
+    .input{display:flex;border-top:1px solid #eee;padding:12px;gap:8px;align-items:center}
+    textarea{flex:1;border:1px solid #e6e6e6;border-radius:8px;padding:10px;resize:none;height:48px}
+    button{background:#0078d7;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer}
+    .btn-ghost{background:transparent;border:1px solid rgba(0,120,215,0.12);color:#0078d7;padding:8px;border-radius:8px}
+    .msg{padding:12px;border-radius:10px;max-width:85%;word-wrap:break-word}
+    .bot{background:#e6f0ff;align-self:flex-start}
+    .user{background:#d7ffd9;align-self:flex-end}
+    .meta{font-size:12px;color:#333;margin-bottom:6px}
+    .typing{font-style:italic;opacity:.85;padding:6px 0}
+    footer.note{padding:8px 12px;font-size:12px;color:#666;text-align:center}
+  </style>
+</head>
+<body>
+  <div class="card" role="main" aria-label="Atenea">
+    <div class="header">
+      <div>🤖 Atenea — Asistente</div>
+      <div class="meta">Profesional • Español</div>
+    </div>
+
+    <div class="messages" id="messages" aria-live="polite">
+      <div class="msg bot"><strong>Atenea:</strong> ¡Hola! Soy Atenea. ¿En qué puedo ayudarte?</div>
+    </div>
+
+    <div class="input">
+      <textarea id="input" placeholder="Escribe tu mensaje..."></textarea>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button id="send">Enviar</button>
+        <button id="toggleMode" class="btn-ghost" title="Cambiar modo: stream/standard">Modo: stream</button>
+      </div>
+    </div>
+
+    <footer class="note">La API está en /api/chat y /api/chat/stream. Guarda tu clave en el servidor (.env).</footer>
+  </div>
+
+  <script>
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const messages = document.getElementById('messages');
+    const toggleModeBtn = document.getElementById('toggleMode');
+
+    const HISTORY_KEY = 'atenea_full_history_v1';
+    const MAX_HISTORY = 20;
+
+    function loadHistory() {
+      try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
+      catch { return []; }
+    }
+    function saveHistory(h) { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); }
+    function pushHistory(role, content){
+      const h = loadHistory();
+      h.push({ role, content, ts: Date.now() });
+      while (h.length > 200) h.shift();
+      saveHistory(h);
+    }
+
+    function escapeHtml(s){
+      return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;').replaceAll('\n','<br/>');
+    }
+
+    function addMessage(text, cls, who){
+      const d = document.createElement('div');
+      d.className = 'msg ' + cls;
+      if (who) d.innerHTML = `<div class="meta"><strong>${escapeHtml(who)}</strong></div>` + escapeHtml(text);
+      else d.innerHTML = escapeHtml(text);
+      messages.appendChild(d);
+      messages.scrollTop = messages.scrollHeight;
+      return d;
+    }
+
+    let isWaiting = false;
+    let typingEl = null;
+
+    function setWaiting(v){
+      isWaiting = v;
+      sendBtn.disabled = v;
+      input.disabled = v;
+      if (v) showTyping(); else hideTyping();
+    }
+    function showTyping(){
+      if (typingEl) return;
+      typingEl = document.createElement('div');
+      typingEl.className = 'typing';
+      typingEl.textContent = 'Atenea está escribiendo...';
+      messages.appendChild(typingEl);
+      messages.scrollTop = messages.scrollHeight;
+    }
+    function hideTyping(){
+      if (typingEl) { messages.removeChild(typingEl); typingEl = null; }
+    }
+
+    let mode = 'stream';
+    toggleModeBtn.addEventListener('click', ()=>{
+      mode = mode === 'stream' ? 'standard' : 'stream';
+      toggleModeBtn.textContent = `Modo: ${mode}`;
+    });
+
+    async function send(){
+      if (isWaiting) return;
+      const text = input.value.trim();
+      if (!text) return;
+      addMessage(text, 'user', 'Tú');
+      pushHistory('user', text);
+      const hist = loadHistory().slice(-MAX_HISTORY).map(h => ({ role: h.role, content: h.content }));
+      input.value = '';
+      setWaiting(true);
+
+      if (mode === 'standard') {
+        try {
+          const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ message: text, history: hist })
+          });
+          if (!res.ok) {
+            const e = await res.json().catch(()=>({ error: 'error' }));
+            addMessage('⚠️ Error: ' + (e.error || res.statusText), 'bot', 'Atenea');
+            setWaiting(false);
+            return;
+          }
+          const data = await res.json();
+          const reply = data?.reply || 'Lo siento, no obtuve respuesta.';
+          addMessage(reply, 'bot', 'Atenea');
+          pushHistory('assistant', reply);
+        } catch (err) {
+          console.error(err);
+          addMessage('⚠️ Error de conexión.', 'bot', 'Atenea');
+        } finally {
+          setWaiting(false);
+        }
+      } else {
+        try {
+          const res = await fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ message: text, history: hist })
+          });
+          if (!res.ok || !res.body) {
+            const e = await res.json().catch(()=>({ error: 'error' }));
+            addMessage('⚠️ Error: ' + (e.error || res.statusText), 'bot', 'Atenea');
+            setWaiting(false);
+            return;
+          }
+          const assistantDiv = addMessage('', 'bot', 'Atenea');
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let partial = '';
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split(/\r?\n/).filter(Boolean);
+            for (const line of lines) {
+              let textChunk = "";
+              try {
+                const parsed = JSON.parse(line);
+                if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta && parsed.choices[0].delta.content) {
+                  textChunk = parsed.choices[0].delta.content;
+                } else if (typeof parsed === "string") {
+                  textChunk = parsed;
+                } else if (parsed?.content) {
+                  textChunk = parsed.content;
+                } else {
+                  textChunk = JSON.stringify(parsed);
+                }
+              } catch (e) {
+                const cleaned = line.replace(/^data:\s*/, "");
+                if (cleaned === "[DONE]") {
+                } else {
+                  textChunk = cleaned;
+                }
+              }
+              partial += textChunk;
+              assistantDiv.innerHTML = `<div class="meta"><strong>Atenea</strong></div>${escapeHtml(partial)}`;
+              messages.scrollTop = messages.scrollHeight;
+            }
+          }
+          pushHistory('assistant', partial);
+        } catch (err) {
+          console.error("Streaming error:", err);
+          addMessage('⚠️ Error de streaming. Intenta de nuevo.', 'bot', 'Atenea');
+        } finally {
+          setWaiting(false);
+        }
+      }
+    }
+
+    sendBtn.addEventListener('click', send);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+
+    (function hydrate(){
+      const hist = loadHistory().slice(-MAX_HISTORY);
+      for (const m of hist) {
+        if (m.role === 'user') addMessage(m.content, 'user', 'Tú');
+        else addMessage(m.content, 'bot', 'Atenea');
+      }
+    })();
+  </script>
+</body>
+</html>
