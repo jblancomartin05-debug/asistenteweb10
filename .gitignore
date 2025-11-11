@@ -1,0 +1,25 @@
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Vercel
+.vercel/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build / deps
+dist/
+build/
+.vscode/
+
+# Local dev artifacts
+vectors.json
+docs/*.emb
